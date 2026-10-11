@@ -23,22 +23,27 @@ def log_threat_event(event_type: str, details: dict):
     return log_entry
 
 def trigger_sos_alert(alert_data: SOSAlertRequest) -> dict:
-    """إرسال تنبيه طوارئ للمرافق عبر البريد الإلكتروني أو السجل"""
     alert_payload = {
         "timestamp": datetime.now().isoformat(),
         "user_id": alert_data.user_id,
-        "guardian_email": getattr(settings, "GUARDIAN_EMAIL", "guardian@example.com"),
+        "guardian_email": settings.GUARDIAN_EMAIL,
         "threat_type": alert_data.threat_type,
         "details": alert_data.threat_details,
         "location": alert_data.location,
-        "status": "SENT"
+        "status": "NOT_SENT",
     }
-    
-    # تسجيل حدث الطوارئ
-    logging.critical(f"CYBER SOS TRIGGERED: {json.dumps(alert_payload, ensure_ascii=False)}")
-    
+
+    # تسجيل طلب الطوارئ محليًا دون الادعاء بأنه أُرسل
+    logging.critical(
+        "CYBER SOS REQUEST LOGGED BUT NOT SENT: %s",
+        json.dumps(alert_payload, ensure_ascii=False),
+    )
+
     return {
-        "success": True,
-        "message": "تم إرسال تنبيه الطوارئ للمرافق بنجاح.",
-        "alert_details": alert_payload
+        "success": False,
+        "message": (
+            "تم تسجيل طلب الطوارئ محليًا، "
+            "لكن خدمة إرسال التنبيهات لم تُفعّل بعد."
+        ),
+        "alert_details": alert_payload,
     }
