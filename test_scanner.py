@@ -51,7 +51,7 @@ def test_scan_url_typosquatting(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["typosquatting_alert"] is True
-    assert response.json()["threat_level"] == "CRITICAL"
+    assert response.json()["threat_level"] == "SUSPICIOUS"
     assert response.json()["is_malicious"] is True
 
 

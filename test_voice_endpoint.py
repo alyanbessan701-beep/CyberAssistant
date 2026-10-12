@@ -43,6 +43,42 @@ def test_scan_voice_success(monkeypatch):
         },
     )
 
+    async def fake_virustotal(domain: str) -> dict:
+        return {
+            "malicious": 0,
+            "suspicious": 0,
+            "available": True,
+        }
+
+    async def fake_phishtank(target_url: str) -> dict:
+        return {
+            "in_database": False,
+            "valid": False,
+            "verified": False,
+            "available": True,
+        }
+
+    def fake_typosquatting(domain: str) -> dict:
+        return {
+            "typosquatting_detected": False,
+        }
+
+    monkeypatch.setattr(
+        main,
+        "check_virustotal",
+        fake_virustotal,
+    )
+    monkeypatch.setattr(
+        main,
+        "check_phishtank",
+        fake_phishtank,
+    )
+    monkeypatch.setattr(
+        main,
+        "detect_typosquatting",
+        fake_typosquatting,
+    )
+
     response = client.post(
         "/scan-nlp-voice",
         files={
@@ -62,3 +98,16 @@ def test_scan_voice_success(monkeypatch):
     assert result["extracted_domains"] == ["example.com"]
     assert result["social_engineering_detected"] is False
     assert result["threat_level"] == "SAFE"
+    assert result["domain_scan_results"] == [
+        {
+            "domain": "example.com",
+            "threat_level": "SAFE",
+            "is_malicious": False,
+            "virustotal_hits": 0,
+            "phishtank_detected": False,
+            "typosquatting_alert": False,
+            "scan_complete": True,
+            "virustotal_available": True,
+            "phishtank_available": True,
+        }
+    ]

@@ -59,9 +59,8 @@ app = FastAPI(
 # 2. إعداد CORS
 # =========================================================
 
-# السماح بالطلبات من المصادر المختلفة أثناء التطوير.
-# عند تجهيز واجهة Flutter Web للإنتاج، يُفضّل تحديد
-# المصادر المسموح بها بدل استخدام "*".
+# إعداد التطوير الحالي.
+# قبل الإنتاج، يجب تحديد المصادر المسموح بها بدل السماح للجميع.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -80,7 +79,7 @@ async def global_exception_handler(
     request: Request,
     exc: Exception,
 ):
-    # تسجيل تفاصيل الخطأ داخل سجل الخادم
+    # تسجيل تفاصيل الخطأ في سجل الخادم
     error_details = {
         "path": request.url.path,
         "error": str(exc),
@@ -91,7 +90,7 @@ async def global_exception_handler(
         error_details,
     )
 
-    # عدم إظهار تفاصيل الخطأ الداخلية للمستخدم
+    # عدم إظهار تفاصيل الأخطاء الداخلية للمستخدم
     return JSONResponse(
         status_code=500,
         content={
@@ -128,11 +127,13 @@ async def scan_url(url: str):
 
     # استخراج نتائج الخدمات
     vt_hits = vt_result.get("malicious", 0)
+
     pt_detected = (
-    pt_result.get("in_database", False)
-    and pt_result.get("verified", False)
-    and pt_result.get("valid", False)
-)
+        pt_result.get("in_database", False)
+        and pt_result.get("verified", False)
+        and pt_result.get("valid", False)
+    )
+
     is_typosquatting = typosquatting_result.get(
         "typosquatting_detected",
         False,
@@ -146,7 +147,7 @@ async def scan_url(url: str):
         vt_available and pt_available
     )
 
-    # تحديد ما إذا تم اكتشاف مؤشر تهديد
+    # وجود مؤشر تهديد، بما في ذلك المؤشر المشبوه
     is_malicious = (
         vt_hits > 0
         or pt_detected
@@ -154,24 +155,40 @@ async def scan_url(url: str):
     )
 
     # تحديد مستوى الخطورة
-    if is_malicious:
+    # CRITICAL: تصيّد مؤكد أو اجتماع رصد ضار وتشابه النطاق
+    # SUSPICIOUS: رصد ضار منفرد أو تشابه نطاق دون تأكيد إضافي
+    # SAFE: اكتملت الفحوص دون مؤشرات تهديد
+    # UNKNOWN: تعذّر إكمال الفحوص دون حسم الخطر
+    if pt_detected or (
+        vt_hits > 0 and is_typosquatting
+    ):
         threat_level = "CRITICAL"
 
-        # تسجيل اكتشاف تهديد
-        log_threat_event(
-            "MALICIOUS_URL_DETECTED",
-            {
-                "url": raw_url,
-                "domain": domain,
-            },
-        )
+    elif vt_hits > 0 or is_typosquatting:
+        threat_level = "SUSPICIOUS"
 
     elif scan_complete:
         threat_level = "SAFE"
 
     else:
-        # تعذّر إكمال إحدى عمليات الفحص الخارجية
         threat_level = "UNKNOWN"
+
+    # تسجيل التهديد أو المؤشر المشبوه
+    if is_malicious:
+        event_type = (
+            "MALICIOUS_URL_DETECTED"
+            if threat_level == "CRITICAL"
+            else "SUSPICIOUS_URL_DETECTED"
+        )
+
+        log_threat_event(
+            event_type,
+            {
+                "url": raw_url,
+                "domain": domain,
+                "threat_level": threat_level,
+            },
+        )
 
     # إرجاع النتيجة مع حالة كل خدمة
     return {
@@ -189,7 +206,7 @@ async def scan_url(url: str):
 
 
 # =========================================================
-# 5. فحص الصوت وتحويله إلى نص وتحليل الهندسة الاجتماعية
+# 5. فحص الصوت وتحليل الهندسة الاجتماعية والنطاقات
 # =========================================================
 
 @app.post(
@@ -224,7 +241,7 @@ async def scan_nlp_voice(
     temp_file_path = None
 
     try:
-        # إنشاء ملف مؤقت باسم عشوائي لتجنب تعارض الأسماء
+        # إنشاء ملف مؤقت باسم عشوائي
         with tempfile.NamedTemporaryFile(
             prefix="cyberassistant_",
             suffix=extension,
@@ -239,45 +256,200 @@ async def scan_nlp_voice(
                 buffer,
             )
 
-        # تحويل الصوت إلى نص
+        # 1. تحويل الصوت إلى نص
         transcribed_text = transcribe_audio(
             temp_file_path
         )
 
-        # استخراج النطاقات المذكورة في الصوت
+        # 2. استخراج النطاقات من النص
         extracted_domains = extract_spoken_domains(
             transcribed_text
         )
 
-        # تحليل النص لاكتشاف الهندسة الاجتماعية
+        # 3. تحليل الهندسة الاجتماعية
         se_analysis = analyze_social_engineering(
             transcribed_text
         )
 
-        # تسجيل المحاولات المشتبه بها
-        if se_analysis["is_social_engineering"]:
+        # 4. فحص كل نطاق مستخرج
+        domain_scan_results = []
+
+        for domain in extracted_domains:
+            # فحص النطاق في VirusTotal
+            vt_result = await check_virustotal(domain)
+
+            # PhishTank يتلقى رابطًا كاملًا
+            target_url = f"https://{domain}/"
+            pt_result = await check_phishtank(target_url)
+
+            # الكشف المحلي عن تشابه النطاق
+            typo_result = detect_typosquatting(domain)
+
+            # استخراج النتائج
+            vt_hits = vt_result.get("malicious", 0)
+
+            pt_detected = (
+                pt_result.get("in_database", False)
+                and pt_result.get("verified", False)
+                and pt_result.get("valid", False)
+            )
+
+            typosquatting_alert = typo_result.get(
+                "typosquatting_detected",
+                False,
+            )
+
+            vt_available = vt_result.get(
+                "available",
+                False,
+            )
+            pt_available = pt_result.get(
+                "available",
+                False,
+            )
+
+            scan_complete = (
+                vt_available and pt_available
+            )
+
+            # وجود أي مؤشر تهديد
+            is_malicious = (
+                vt_hits > 0
+                or pt_detected
+                or typosquatting_alert
+            )
+
+            # سياسة تصنيف موحدة مع /scan-url
+            if pt_detected or (
+                vt_hits > 0 and typosquatting_alert
+            ):
+                domain_threat_level = "CRITICAL"
+
+            elif vt_hits > 0 or typosquatting_alert:
+                domain_threat_level = "SUSPICIOUS"
+
+            elif scan_complete:
+                domain_threat_level = "SAFE"
+
+            else:
+                domain_threat_level = "UNKNOWN"
+
+            # تسجيل أي مؤشر تهديد
+            if is_malicious:
+                event_type = (
+                    "MALICIOUS_URL_DETECTED"
+                    if domain_threat_level == "CRITICAL"
+                    else "SUSPICIOUS_URL_DETECTED"
+                )
+
+                log_threat_event(
+                    event_type,
+                    {
+                        "source": "VOICE",
+                        "filename": filename,
+                        "domain": domain,
+                        "threat_level": domain_threat_level,
+                    },
+                )
+
+            # حفظ نتيجة فحص النطاق
+            domain_scan_results.append({
+                "domain": domain,
+                "threat_level": domain_threat_level,
+                "is_malicious": is_malicious,
+                "virustotal_hits": vt_hits,
+                "phishtank_detected": pt_detected,
+                "typosquatting_alert": typosquatting_alert,
+                "scan_complete": scan_complete,
+                "virustotal_available": vt_available,
+                "phishtank_available": pt_available,
+            })
+
+        # 5. تحديد مستوى الخطورة العام للصوت
+        se_threat_level = se_analysis.get(
+            "threat_level",
+            "UNKNOWN",
+        )
+
+        domain_levels = [
+            item["threat_level"]
+            for item in domain_scan_results
+        ]
+
+        if (
+            "CRITICAL" in domain_levels
+            or se_threat_level == "CRITICAL"
+        ):
+            overall_threat_level = "CRITICAL"
+
+        elif (
+            "SUSPICIOUS" in domain_levels
+            or se_analysis.get(
+                "is_social_engineering",
+                False,
+            )
+            or se_threat_level == "SUSPICIOUS"
+        ):
+            overall_threat_level = "SUSPICIOUS"
+
+        elif extracted_domains:
+            all_domains_safe = all(
+                item["scan_complete"]
+                and item["threat_level"] == "SAFE"
+                for item in domain_scan_results
+            )
+
+            if (
+                all_domains_safe
+                and se_threat_level == "SAFE"
+                and not se_analysis.get(
+                    "is_social_engineering",
+                    False,
+                )
+            ):
+                overall_threat_level = "SAFE"
+
+            else:
+                overall_threat_level = "UNKNOWN"
+
+        else:
+            # إذا لم يُستخرج أي نطاق، نعتمد تحليل النص
+            overall_threat_level = se_threat_level
+
+        # 6. تسجيل مؤشرات الهندسة الاجتماعية
+        if se_analysis.get(
+            "is_social_engineering",
+            False,
+        ):
             log_threat_event(
                 "SOCIAL_ENGINEERING_VOICE",
                 {
                     "filename": filename,
-                    "triggers": se_analysis[
-                        "detected_triggers"
-                    ],
+                    "triggers": se_analysis.get(
+                        "detected_triggers",
+                        [],
+                    ),
                 },
             )
 
-        # إرجاع نتيجة تحليل الصوت
+        # 7. إعادة جميع النتائج
         return {
             "filename": filename,
             "transcription": transcribed_text,
             "extracted_domains": extracted_domains,
-            "social_engineering_detected": (
-                se_analysis["is_social_engineering"]
+            "domain_scan_results": domain_scan_results,
+            "threat_level": overall_threat_level,
+            "confidence_score": se_analysis.get(
+                "risk_score",
+                0.0,
             ),
-            "threat_level": se_analysis["threat_level"],
-            "confidence_score": se_analysis["risk_score"],
-            "detected_triggers": (
-                se_analysis["detected_triggers"]
+            "social_engineering_detected": se_analysis.get(
+                "is_social_engineering",
+                False,
+            ),
+            "detected_triggers": se_analysis.get(
+                "detected_triggers",
+                [],
             ),
         }
 

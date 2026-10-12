@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
+
 
 class URLScanResponse(BaseModel):
     url: str
@@ -13,6 +14,19 @@ class URLScanResponse(BaseModel):
     virustotal_available: bool
     phishtank_available: bool
 
+
+class SpokenDomainScanResult(BaseModel):
+    domain: str
+    threat_level: str
+    is_malicious: bool
+    virustotal_hits: int
+    phishtank_detected: bool
+    typosquatting_alert: bool
+    scan_complete: bool
+    virustotal_available: bool
+    phishtank_available: bool
+
+
 class VoiceScanResponse(BaseModel):
     filename: str
     transcription: str
@@ -21,6 +35,11 @@ class VoiceScanResponse(BaseModel):
     confidence_score: float
     social_engineering_detected: bool
     detected_triggers: List[str]
+    domain_scan_results: List[SpokenDomainScanResult] = Field(
+        default_factory=list
+    )
+
+
 class SOSAlertRequest(BaseModel):
     user_id: str
     threat_type: str
