@@ -118,3 +118,37 @@ def test_scan_url_unknown_if_phishtank_unavailable(monkeypatch):
     assert response.json()["threat_level"] == "UNKNOWN"
     assert response.json()["scan_complete"] is False
     assert response.json()["phishtank_available"] is False
+
+
+def test_phishtank_invalid_record_not_flagged(monkeypatch):
+    async def fake_virustotal(domain: str) -> dict:
+        return {
+            "malicious": 0,
+            "suspicious": 0,
+            "available": True,
+        }
+
+    async def fake_phishtank(target_url: str) -> dict:
+        return {
+            "in_database": True,
+            "valid": False,
+            "verified": False,
+            "available": True,
+        }
+
+    monkeypatch.setattr(
+        main, "check_virustotal", fake_virustotal
+    )
+    monkeypatch.setattr(
+        main, "check_phishtank", fake_phishtank
+    )
+
+    response = client.post(
+        "/scan-url",
+        params={"url": "https://www.wikipedia.org/"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["phishtank_detected"] is False
+    assert response.json()["threat_level"] == "SAFE"
+    assert response.json()["scan_complete"] is True

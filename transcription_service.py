@@ -17,8 +17,7 @@ def extract_spoken_domains(text: str) -> list:
     # تحويل الصيغ الصوتية للنطاقات (مثل dot إلى .)
     cleaned_text = re.sub(r'\b(dot|point)\b', '.', text, flags=re.IGNORECASE)
     cleaned_text = re.sub(r'\b(at)\b', '@', cleaned_text, flags=re.IGNORECASE)
-    cleaned_text = re.sub(r'\s+', '', cleaned_text)
-
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
     domain_pattern = r'(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}'
     found_matches = re.findall(domain_pattern, cleaned_text)
     

@@ -128,8 +128,11 @@ async def scan_url(url: str):
 
     # استخراج نتائج الخدمات
     vt_hits = vt_result.get("malicious", 0)
-    pt_detected = pt_result.get("in_database", False)
-
+    pt_detected = (
+    pt_result.get("in_database", False)
+    and pt_result.get("verified", False)
+    and pt_result.get("valid", False)
+)
     is_typosquatting = typosquatting_result.get(
         "typosquatting_detected",
         False,

@@ -43,41 +43,45 @@ async def check_virustotal(domain: str) -> dict:
 
 
 async def check_phishtank(target_url: str) -> dict:
+    default_result = {
+        "in_database": False,
+        "valid": False,
+        "verified": False,
+        "available": False,
+    }
+
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 "https://checkurl.phishtank.com/checkurl/",
                 data={
                     "url": target_url,
                     "format": "json",
                 },
+                headers={
+                    "User-Agent": "phishtank/CyberAssistant",
+                },
             )
 
         if response.status_code != 200:
-            return {
-                "in_database": False,
-                "valid": False,
-                "available": False,
-            }
+            return default_result
 
-        results = response.json().get("results")
+        payload = response.json()
+
+        if not isinstance(payload, dict):
+            return default_result
+
+        results = payload.get("results")
 
         if not isinstance(results, dict):
-            return {
-                "in_database": False,
-                "valid": False,
-                "available": False,
-            }
+            return default_result
 
         return {
-            "in_database": results.get("in_database", False),
-            "valid": results.get("valid", False),
+            "in_database": results.get("in_database") is True,
+            "valid": results.get("valid") is True,
+            "verified": results.get("verified") is True,
             "available": True,
         }
 
     except (httpx.RequestError, ValueError, TypeError):
-        return {
-            "in_database": False,
-            "valid": False,
-            "available": False,
-        }
+        return default_result
